@@ -1,0 +1,44 @@
+name: auto-mirror
+on:
+  schedule:
+    - cron: "7,22,37,52 * * * *"
+  workflow_dispatch:
+permissions:
+  contents: write
+concurrency: auto-mirror
+jobs:
+  mirror:
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: mirror new versions from dl.jmv1.app
+        run: |
+          set -e
+          curl -fsS https://dl.jmv1.app/api/mirror/pending -o p.json
+          cat p.json
+          n=$(jq '.pending | length' p.json)
+          for i in $(seq 0 $((n-1))); do
+            tag=$(jq -r ".pending[$i].tag" p.json); title=$(jq -r ".pending[$i].title" p.json)
+            file=$(jq -r ".pending[$i].file" p.json); url=$(jq -r ".pending[$i].url" p.json); sha=$(jq -r ".pending[$i].sha256" p.json)
+            echo "== $tag $file"
+            rm -f "$file"
+            if ! curl -fL --retry 5 --retry-delay 5 -o "$file" "$url"; then echo "download failed $tag"; continue; fi
+            if [ -n "$sha" ] && ! echo "$sha  $file" | sha256sum -c -; then echo "sha mismatch $tag"; continue; fi
+            gh release view "$tag" -R "$GITHUB_REPOSITORY" >/dev/null 2>&1 || gh release create "$tag" -R "$GITHUB_REPOSITORY" --title "$title" --notes "$title"
+            gh release upload "$tag" "$file" -R "$GITHUB_REPOSITORY" --clobber
+            rm -f "$file"
+          done
+          if [ "$n" -gt 0 ]; then sleep 5; curl -fsS https://dl.jmv1.app/api/mirror/pending; fi
+      - name: weekly keepalive (scheduled workflows stop after 60 idle days)
+        if: github.event_name == 'schedule'
+        uses: actions/checkout@v4
+      - name: keepalive commit
+        if: github.event_name == 'schedule'
+        run: |
+          f=.github/last-run.txt; w=$(date -u +%G-W%V)
+          if [ "$(cat $f 2>/dev/null)" != "$w" ]; then
+            echo "$w" > $f
+            git config user.name "jeil-bot"; git config user.email "support@jmv1.app"
+            git add $f && git commit -m "keepalive $w" && git push
+          fi
