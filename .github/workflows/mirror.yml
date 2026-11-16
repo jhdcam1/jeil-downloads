@@ -1,0 +1,26 @@
+name: mirror
+on:
+  workflow_dispatch:
+    inputs:
+      tag: {required: true}
+      title: {required: true}
+      file: {required: true}
+      url: {required: true}
+      sha256: {required: false, default: ""}
+permissions:
+  contents: write
+jobs:
+  mirror:
+    runs-on: ubuntu-latest
+    steps:
+      - name: download
+        env: {URL: "${{ inputs.url }}", FILE: "${{ inputs.file }}", SHA: "${{ inputs.sha256 }}"}
+        run: |
+          curl -fL --retry 5 --retry-delay 5 -o "$FILE" "$URL"
+          ls -l "$FILE"
+          if [ -n "$SHA" ]; then echo "$SHA  $FILE" | sha256sum -c -; fi
+      - name: release
+        env: {GH_TOKEN: "${{ github.token }}", TAG: "${{ inputs.tag }}", TITLE: "${{ inputs.title }}", FILE: "${{ inputs.file }}"}
+        run: |
+          gh release view "$TAG" -R "$GITHUB_REPOSITORY" >/dev/null 2>&1 || gh release create "$TAG" -R "$GITHUB_REPOSITORY" --title "$TITLE" --notes "$TITLE"
+          gh release upload "$TAG" "$FILE" -R "$GITHUB_REPOSITORY" --clobber
